@@ -79,21 +79,12 @@ public class ItuDurationParser
 
         final DurationPartsConsumer handler = new DurationPartsConsumer(index, negative);
         final int length = text.length();
-        try
+        while (index < length)
         {
-            while (index < length)
-            {
-                index = readUntilNonDigit(text, index, handler);
-            }
+            index = readUntilNonDigit(text, index, handler);
+        }
 
-            handler.validate(text, index);
-        }
-        catch (ArithmeticException exc)
-        {
-            // NOTE: The overflow checks below use Math.addExact/multiplyExact, which signal with an
-            // ArithmeticException. Callers are documented to get a DateTimeParseException, so translate it.
-            error("Duration is too large to be represented", text, Math.min(index, text.length() - 1));
-        }
+        handler.validate(text, index);
 
         return handler.getResult();
     }
@@ -103,29 +94,40 @@ public class ItuDurationParser
         long value = 0;
         int index = offset;
         int startIndex = index;
-        for (; index < text.length(); index++)
+        // NOTE: The overflow checks below use Math.addExact/multiplyExact, which signal with an
+        // ArithmeticException. Callers are documented to get a DateTimeParseException, so translate it.
+        // The catch is located here, rather than in the caller, so that the reported error position
+        // tracks the local cursor (the overflowing digit or the unit being accumulated into)
+        try
         {
-            final char c = text.charAt(index);
-            if (c >= DIGIT_ZERO && c <= DIGIT_NINE)
+            for (; index < text.length(); index++)
             {
-                final int digit = c - DIGIT_ZERO;
-                value = Math.addExact(Math.multiplyExact(value, RADIX), digit);
+                final char c = text.charAt(index);
+                if (c >= DIGIT_ZERO && c <= DIGIT_NINE)
+                {
+                    final int digit = c - DIGIT_ZERO;
+                    value = Math.addExact(Math.multiplyExact(value, RADIX), digit);
+                }
+                else
+                {
+                    final int length = index - startIndex;
+                    consumer.accept(text, index, length, c, value);
+                    value = 0;
+                    startIndex = index + 1;
+                    break;
+                }
             }
-            else
+
+            // If we never hit any non-digit
+            final int length = index - startIndex;
+            if (index - startIndex > 0)
             {
-                final int length = index - startIndex;
-                consumer.accept(text, index, length, c, value);
-                value = 0;
-                startIndex = index + 1;
-                break;
+                consumer.accept(text, index, length, UNIT_UNDEFINED, value);
             }
         }
-
-        // If we never hit any non-digit
-        final int length = index - startIndex;
-        if (index - startIndex > 0)
+        catch (ArithmeticException exc)
         {
-            consumer.accept(text, index, length, UNIT_UNDEFINED, value);
+            error("Duration is too large to be represented", text, Math.min(index, text.length() - 1));
         }
 
         return index + 1;
